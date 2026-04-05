@@ -17,12 +17,11 @@ export default function Home() {
       {/* Background photo z-index 0 */}
       <div className="absolute inset-0" style={{ zIndex: 0 }}>
         <Image
-          src="https://upload.wikimedia.org/wikipedia/commons/thumb/5/5c/Forbes_Field_interior.jpg/1280px-Forbes_Field_interior.jpg"
+          src="/images/forbes-field.jpg"
           alt="Forbes Field"
           fill
           style={{ objectFit: 'cover', filter: 'sepia(0.4) brightness(0.9)' }}
           priority
-          unoptimized
         />
         <div className="absolute inset-0 bg-black/50" />
       </div>
