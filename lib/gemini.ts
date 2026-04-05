@@ -1,5 +1,6 @@
 import { GoogleGenerativeAI } from '@google/generative-ai';
 import { isQuestionTooEasy } from '@/lib/validateQuestion';
+import { supabaseAdmin } from '@/lib/supabase';
 
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY!);
 
@@ -269,8 +270,55 @@ function getEraContext(era: string): string {
   }
 }
 
-// ── Fallback question bank (last resort) ────────────────────────────────────
-function getFallbackQuestion(difficulty?: 'easy' | 'medium' | 'hard'): Question {
+// ── Fallback: try question_bank table first, then hardcoded ─────────────────
+async function getFallbackFromBank(difficulty?: 'easy' | 'medium' | 'hard'): Promise<Question | null> {
+  try {
+    const query = supabaseAdmin
+      .from('question_bank')
+      .select('*')
+      .order('times_used', { ascending: true })
+      .limit(5);
+
+    if (difficulty) query.eq('difficulty', difficulty);
+
+    const { data, error } = await query;
+    if (error || !data || data.length === 0) return null;
+
+    // Pick randomly from the least-used 5
+    const row = data[Math.floor(Math.random() * data.length)];
+
+    // Increment times_used asynchronously (don't await to avoid slowing response)
+    supabaseAdmin
+      .from('question_bank')
+      .update({ times_used: (row.times_used ?? 0) + 1 })
+      .eq('id', row.id)
+      .then(() => {});
+
+    return {
+      id: row.id,
+      text: row.text,
+      type: row.type,
+      difficulty: row.difficulty,
+      options: row.options ?? undefined,
+      correct_answer: row.correct_answer,
+      explanation: row.explanation ?? '',
+      era: row.era ?? undefined,
+      category: row.category ?? undefined,
+    };
+  } catch {
+    return null;
+  }
+}
+
+async function getFallbackQuestion(difficulty?: 'easy' | 'medium' | 'hard'): Promise<Question> {
+  // Try the question_bank table first
+  const fromBank = await getFallbackFromBank(difficulty);
+  if (fromBank) return fromBank;
+  // Fall through to hardcoded emergency fallbacks
+  return getHardcodedFallback(difficulty);
+}
+
+function getHardcodedFallback(difficulty?: 'easy' | 'medium' | 'hard'): Question {
   const questions: Question[] = [
     {
       id: crypto.randomUUID(),
