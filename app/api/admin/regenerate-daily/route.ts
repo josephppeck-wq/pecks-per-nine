@@ -10,7 +10,7 @@
  *        Header: x-admin-secret: <ADMIN_SECRET env var>
  */
 import { NextRequest, NextResponse } from 'next/server';
-import { supabaseAdmin } from '@/lib/supabase';
+import { supabaseAdmin, setDailyQuestion } from '@/lib/supabase';
 import { generateDailyQuestion } from '@/lib/gemini';
 
 function getCTDateStr(date: Date): string {
@@ -47,16 +47,6 @@ export async function GET(req: NextRequest) {
       ? 'Pirates-birthday'
       : (ERA_BY_DOW[dayOfWeek] ?? 'Modern');
 
-  // Delete today's existing question
-  const { error: deleteError } = await supabaseAdmin
-    .from('daily_question')
-    .delete()
-    .eq('question_date', todayStr);
-
-  if (deleteError) {
-    return NextResponse.json({ error: 'Failed to delete existing question', detail: deleteError.message }, { status: 500 });
-  }
-
   // Generate new question with stricter validator
   let question;
   try {
@@ -65,14 +55,8 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ error: 'Generation failed', detail: String(err) }, { status: 500 });
   }
 
-  // Insert
-  const { error: insertError } = await supabaseAdmin
-    .from('daily_question')
-    .insert({ question_data: question, question_date: todayStr });
-
-  if (insertError) {
-    return NextResponse.json({ error: 'Failed to insert question', detail: insertError.message }, { status: 500 });
-  }
+  // Upsert — overwrites today's question if it exists
+  await setDailyQuestion(question);
 
   return NextResponse.json({
     success: true,
