@@ -14,7 +14,7 @@ export interface Question {
   category?: string;
 }
 
-const SYSTEM_PROMPT = `You are a baseball historian and trivia expert specializing in the history of Major League Baseball from 1900-2000. Generate engaging baseball trivia questions.
+const SYSTEM_PROMPT = `You are a baseball historian and trivia expert specializing in the history of Major League Baseball from 1900-2000. Generate engaging, genuinely challenging baseball trivia questions.
 
 Return JSON with this exact structure:
 {
@@ -28,21 +28,48 @@ Return JSON with this exact structure:
   "category": "records" | "stadiums" | "players" | "teams" | "stats" | "history"
 }
 
-Focus on: legendary players, historic moments, classic stadiums, memorable seasons, records, and the colorful characters of baseball's golden age. Make questions genuinely interesting and varied in difficulty.`;
+DIFFICULTY SETTINGS:
+easy (20% of questions):
+ - Still challenging — not basic facts
+ - Example: 'How many World Series did the Yankees win in the 1990s?' not 'Who was Babe Ruth?'
+ - Should stump casual fans occasionally
+
+medium (50% of questions):
+ - Genuinely hard — requires deep knowledge
+ - Specific stats, specific years, specific records
+ - Example: 'Who holds the NL record for RBIs in a single season?' or 'What year did Forbes Field open?'
+ - Should stump most fans
+
+hard (30% of questions):
+ - Expert level — sabermetrics club difficulty
+ - Advanced stats, obscure records, rare facts
+ - Example: 'Which pitcher had the lowest ERA+ in a Cy Young winning season since 1980?'
+ - Should challenge even hardcore historians
+
+NEVER generate questions about:
+ - Basic Hall of Fame membership
+ - Obvious nicknames (The Sultan of Swat, etc.)
+ - Questions answerable with zero baseball knowledge`;
 
 export async function generateQuestion(
   difficulty?: 'easy' | 'medium' | 'hard',
   category?: string,
   era?: string,
-  questionType?: string
+  questionType?: string,
+  usedQuestions?: string[]
 ): Promise<Question> {
   const model = genAI.getGenerativeModel({ model: 'gemini-1.5-flash' });
+
+  const exclusionNote =
+    usedQuestions && usedQuestions.length > 0
+      ? `\nDo NOT generate any of these questions already asked this session:\n${usedQuestions.map((q, i) => `${i + 1}. ${q}`).join('\n')}\nGenerate a completely different question.`
+      : '';
 
   const userPrompt = `Generate a baseball trivia question.
 ${difficulty ? `Difficulty: ${difficulty}` : 'Random difficulty'}
 ${category ? `Category: ${category}` : ''}
 ${era ? `Era: ${era}` : ''}
-${questionType ? `Type: ${questionType}` : 'Any type'}
+${questionType ? `Type: ${questionType}` : 'Any type'}${exclusionNote}
 
 Return only valid JSON, no markdown.`;
 
@@ -101,8 +128,17 @@ export async function generateDailyQuestion(
     eraContext = `baseball history related to the ${era} era.`;
   }
 
+  const obscurityInstruction = `
+This is the featured daily question. It must be a genuinely obscure fact that even dedicated fans would find challenging. Ideal daily questions:
+- Specific statistical records and the players who hold them
+- Obscure World Series or playoff facts
+- Rare achievements or unusual records
+- Specific dates, numbers, or stats that require deep knowledge
+- Pirates-specific obscure facts when era is Pirates-focused or Pirates-birthday
+The question should make a sabermetrics club debate the answer before submitting.`;
+
   const userPrompt = `Generate a baseball trivia question about ${eraContext}
-Difficulty: ${difficulty}
+Difficulty: ${difficulty}${obscurityInstruction}
 
 Return only valid JSON, no markdown.`;
 

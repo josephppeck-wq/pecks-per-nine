@@ -82,16 +82,20 @@ export default function GamePage() {
 
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const [showEmail, setShowEmail] = useState(false);
+  const usedQuestionsRef = useRef<string[]>([]);
 
   const fetchQuestion = useCallback(async (): Promise<Question | null> => {
     try {
+      const isSabermetrics = mode === 'sabermetrics';
       const res = await fetch('/api/generate-question', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          difficulty: difficulty === 'mixed' ? undefined : difficulty,
+          difficulty: isSabermetrics ? 'hard' : difficulty === 'mixed' ? undefined : difficulty,
           category: category === 'all' ? undefined : category,
-          questionType: mode === 'sabermetrics' ? 'type_in' : undefined,
+          questionType: isSabermetrics ? 'type_in' : undefined,
+          era: isSabermetrics ? 'sabermetrics' : undefined,
+          usedQuestions: usedQuestionsRef.current,
         }),
       });
       const data = await res.json();
@@ -136,6 +140,10 @@ export default function GamePage() {
       clearInterval(timerRef.current!);
       setState((s) => {
         const q = s.questions[s.currentIndex];
+        // Track this question so it won't repeat
+        if (q && !usedQuestionsRef.current.includes(q.text)) {
+          usedQuestionsRef.current = [...usedQuestionsRef.current, q.text];
+        }
         const correct = answer !== '' && checkAnswer(answer, q);
         const newStreak = correct ? s.streak + 1 : 0;
         const points = correct ? calcScore(q.difficulty, s.timeRemaining, newStreak) : 0;
@@ -180,27 +188,17 @@ export default function GamePage() {
 
     setState((s) => ({ ...s, phase: 'loading' }));
 
-    if (!state.questions[nextIndex]) {
-      const q = await fetchQuestion();
-      setState((s) => ({
-        ...s,
-        questions: q ? [...s.questions, q] : s.questions,
-        currentIndex: nextIndex,
-        phase: q ? 'question' : 'gameover',
-        timeRemaining: QUESTION_TIME,
-        selectedAnswer: null,
-        lastCorrect: null,
-      }));
-    } else {
-      setState((s) => ({
-        ...s,
-        currentIndex: nextIndex,
-        phase: 'question',
-        timeRemaining: QUESTION_TIME,
-        selectedAnswer: null,
-        lastCorrect: null,
-      }));
-    }
+    // Always fetch a fresh question — pass usedQuestions to guarantee no repeats
+    const q = await fetchQuestion();
+    setState((s) => ({
+      ...s,
+      questions: q ? [...s.questions, q] : s.questions,
+      currentIndex: nextIndex,
+      phase: q ? 'question' : 'gameover',
+      timeRemaining: QUESTION_TIME,
+      selectedAnswer: null,
+      lastCorrect: null,
+    }));
   }, [state, totalCount, mode, fetchQuestion]);
 
   const currentQuestion = state.questions[state.currentIndex];

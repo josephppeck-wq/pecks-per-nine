@@ -12,8 +12,8 @@ export async function POST(req: NextRequest) {
 
   try {
     const body = await req.json();
-    const { difficulty, category, era, questionType } = body;
-    const question = await generateQuestion(difficulty, category, era, questionType);
+    const { difficulty, category, era, questionType, usedQuestions } = body;
+    const question = await generateQuestion(difficulty, category, era, questionType, usedQuestions);
     return NextResponse.json({ question });
   } catch {
     return NextResponse.json({ error: 'Generation failed' }, { status: 500 });

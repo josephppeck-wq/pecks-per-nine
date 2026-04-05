@@ -53,7 +53,7 @@ export async function GET(req: NextRequest) {
         ? 'Pirates-birthday'
         : (ERA_BY_DOW[dayOfWeek] ?? 'Modern');
 
-    const difficulty: 'medium' | 'hard' = Math.random() < 0.5 ? 'medium' : 'hard';
+    const difficulty: 'hard' = 'hard';
 
     const question = await generateDailyQuestion(era, difficulty);
     await setDailyQuestion(question);
