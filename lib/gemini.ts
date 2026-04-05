@@ -1,4 +1,5 @@
 import { GoogleGenerativeAI } from '@google/generative-ai';
+import { isQuestionTooEasy } from '@/lib/validateQuestion';
 
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY!);
 
@@ -14,6 +15,7 @@ export interface Question {
   category?: string;
 }
 
+// ── Shared system prompt (used by generateQuestion for regular play) ─────────
 const SYSTEM_PROMPT = `You are a baseball historian and trivia expert specializing in the history of Major League Baseball from 1900-2000. Generate engaging, genuinely challenging baseball trivia questions.
 
 Return JSON with this exact structure:
@@ -70,18 +72,40 @@ For list questions at hard difficulty:
 
 For true/false at hard difficulty:
  - Must involve specific stats or records that require genuine expertise to evaluate
- - Example: 'True or False: Mike Trout's peak 3-year WAR from 2012-2014 exceeded Barry Bonds' peak 3-year WAR from 2001-2003'
+ - Example: 'True or False: Mike Trout's peak 3-year WAR from 2012-2014 exceeded Barry Bonds peak 3-year WAR from 2001-2003'
  - Never use obvious true/false that any fan would know
 
 For type-in at hard difficulty:
  - Ask for specific numbers, years, or names that require genuine recall
- - Example: 'To the nearest 10 points, what was Ted Williams' OPS+ in his final full season?'
+ - Example: 'To the nearest 10 points, what was Ted Williams OPS+ in his final full season?'
  - Accept answers within reasonable range for numeric answers
 
 NEVER generate questions about:
  - Basic Hall of Fame membership
  - Obvious nicknames (The Sultan of Swat, etc.)
  - Questions answerable with zero baseball knowledge`;
+
+// ── Helper: call Gemini and parse JSON ───────────────────────────────────────
+async function callGemini(
+  model: ReturnType<typeof genAI.getGenerativeModel>,
+  systemPrompt: string,
+  userPrompt: string
+): Promise<Record<string, unknown> | null> {
+  try {
+    const result = await model.generateContent([
+      { text: systemPrompt },
+      { text: userPrompt },
+    ]);
+    const text = result.response.text().trim();
+    const cleaned = text.replace(/^```json?\n?/, '').replace(/\n?```$/, '');
+    return JSON.parse(cleaned);
+  } catch {
+    return null;
+  }
+}
+
+// ── generateQuestion: regular play, with retry + validation ─────────────────
+const MAX_RETRIES = 3;
 
 export async function generateQuestion(
   difficulty?: 'easy' | 'medium' | 'hard',
@@ -97,165 +121,195 @@ export async function generateQuestion(
       ? `\nDo NOT generate any of these questions already asked this session:\n${usedQuestions.map((q, i) => `${i + 1}. ${q}`).join('\n')}\nGenerate a completely different question.`
       : '';
 
-  const userPrompt = `Generate a baseball trivia question.
+  const rejectedQuestions: string[] = [];
+
+  for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
+    const rejectionNote =
+      rejectedQuestions.length > 0
+        ? `\nThe following questions were rejected for being too easy. Do NOT generate similar questions:\n${rejectedQuestions.map((q, i) => `${i + 1}. ${q}`).join('\n')}\nGenerate a significantly harder and more obscure question.`
+        : '';
+
+    const userPrompt = `Generate a baseball trivia question.
 ${difficulty ? `Difficulty: ${difficulty}` : 'Random difficulty'}
 ${category ? `Category: ${category}` : ''}
 ${era ? `Era: ${era}` : ''}
-${questionType ? `Type: ${questionType}` : 'Any type'}${exclusionNote}
+${questionType ? `Type: ${questionType}` : 'Any type'}${exclusionNote}${rejectionNote}
 
 Return only valid JSON, no markdown.`;
 
-  try {
-    const result = await model.generateContent([
-      { text: SYSTEM_PROMPT },
-      { text: userPrompt },
-    ]);
-    const text = result.response.text().trim();
-    const cleaned = text.replace(/^```json?\n?/, '').replace(/\n?```$/, '');
-    const parsed = JSON.parse(cleaned);
-    return { id: crypto.randomUUID(), ...parsed };
-  } catch {
-    // Retry once
-    try {
-      const result = await model.generateContent([
-        { text: SYSTEM_PROMPT },
-        { text: userPrompt + '\n\nReturn ONLY valid JSON, absolutely no other text.' },
-      ]);
-      const text = result.response.text().trim();
-      const cleaned = text.replace(/^```json?\n?/, '').replace(/\n?```$/, '');
-      const parsed = JSON.parse(cleaned);
-      return { id: crypto.randomUUID(), ...parsed };
-    } catch {
-      return getFallbackQuestion(difficulty);
+    const parsed = await callGemini(model, SYSTEM_PROMPT, userPrompt);
+    if (!parsed) continue;
+
+    const question: Question = { id: crypto.randomUUID(), ...(parsed as Omit<Question, 'id'>) };
+
+    // Validate difficulty — reject and retry if too easy for hard
+    if (difficulty === 'hard' && isQuestionTooEasy(question.text)) {
+      rejectedQuestions.push(question.text);
+      continue;
     }
+
+    return question;
   }
+
+  // All retries exhausted
+  return getFallbackQuestion(difficulty);
 }
+
+// ── generateDailyQuestion: dedicated system prompt, strict validator ─────────
+const DAILY_SYSTEM_PROMPT = `You are generating the daily featured question for a website used by a sabermetrics club. These are expert baseball statisticians who know advanced metrics cold.
+
+Return JSON with this exact structure:
+{
+  "text": "The question text",
+  "type": "multiple_choice" | "true_false" | "type_in" | "list_entry",
+  "difficulty": "hard",
+  "options": ["A", "B", "C", "D"] (for multiple_choice only),
+  "correct_answer": "The answer" (string for single answer, array for list_entry),
+  "explanation": "Brief explanation of the answer",
+  "era": "optional era string",
+  "category": "records" | "stadiums" | "players" | "teams" | "stats" | "history"
+}
+
+STRICT REQUIREMENTS:
+ - The answer must NOT be Jackie Robinson, Babe Ruth, or any fact known to casual fans
+ - The question must involve a specific number, year, stat, or record
+ - A casual fan must not be able to answer this
+ - The question must be at least 80 characters long
+ - Must reference specific statistics, records, or obscure historical facts
+ - Difficulty: EXPERT ONLY
+
+GOOD EXAMPLES:
+ "Which pitcher led the NL in FIP in 1968 with a mark under 2.00 despite pitching for a losing team?"
+ "What is the highest single-season WAR recorded by a Pittsburgh Pirate position player and who recorded it?"
+ "Name the only catcher since 1960 to post an OPS+ above 160 in a season with at least 400 plate appearances"
+ "True or False: The 1998 Yankees had a higher run differential than the 2001 Mariners despite the Mariners winning more games"
+
+BAD EXAMPLES (NEVER generate these):
+ "What year did Jackie Robinson break the color barrier?"
+ "How many career home runs did Babe Ruth hit?"
+ "Who won the 1927 World Series?"
+ "What team did Willie Mays play for?"
+
+Respond in JSON only. No markdown. No backticks.`;
+
+const DAILY_FORMAT_BY_DOW: Record<number, string> = {
+  0: 'a true/false question with a surprising or counterintuitive correct answer involving specific stats or records',
+  1: 'an advanced stat record question involving WAR, OPS+, ERA+, or FIP — ask for a specific record holder or value',
+  2: 'an obscure World Series or postseason fact — specific game, stat, or achievement most fans would not know',
+  3: 'a specific franchise record for any MLB team — most obscure records preferred',
+  4: 'a historical stat line or single-season record — ask for a specific number or player',
+  5: 'a Pittsburgh Pirates specific obscure fact or record — franchise history, stats, or players',
+  6: 'a list question asking players who achieved a rare feat — e.g. "Name 3 players who..."',
+};
 
 export async function generateDailyQuestion(
   era: string,
-  difficulty: 'medium' | 'hard'
+  _difficulty: 'medium' | 'hard', // always overridden to hard
+  dayOfWeek?: number
 ): Promise<Question> {
   const model = genAI.getGenerativeModel({ model: 'gemini-2.5-flash' });
 
-  let eraContext: string;
-  if (era === 'Pirates-birthday') {
-    eraContext =
-      'Pittsburgh Pirates baseball with a birthday celebration angle. Focus on Pirates history, legendary Pirates players, memorable Pirates moments, and their storied franchise.';
-  } else if (era === 'Sabermetrics') {
-    eraContext =
-      'advanced baseball statistics including WAR, OPS+, FIP, WHIP, xFIP, wRC+, BABIP, and other sabermetric concepts. Test knowledge of these metrics and the players who excelled by these measures.';
-  } else if (era === 'Deadball') {
-    eraContext =
-      'the Deadball Era of baseball (approximately 1900–1919), including its players, pitching-dominated strategies, rules, and historic events.';
-  } else if (era === 'Classic') {
-    eraContext =
-      'the Classic Era of baseball (1920s–1960s), including the golden age of the sport, legendary players, and historic moments.';
-  } else if (era === 'Modern') {
-    eraContext =
-      'the Modern Era of baseball (1970s–present), including contemporary players, records, and events.';
-  } else if (era === 'Pirates-focused') {
-    eraContext =
-      'the Pittsburgh Pirates franchise, including their history, players, World Series appearances, and iconic moments at Forbes Field and PNC Park.';
-  } else {
-    eraContext = `baseball history related to the ${era} era.`;
+  const formatInstruction =
+    dayOfWeek !== undefined && DAILY_FORMAT_BY_DOW[dayOfWeek]
+      ? `\nToday's format: ${DAILY_FORMAT_BY_DOW[dayOfWeek]}.`
+      : '';
+
+  const eraInstruction = era
+    ? `\nFocus on: ${getEraContext(era)}`
+    : '';
+
+  const rejectedQuestions: string[] = [];
+  const DAILY_MAX_RETRIES = 5;
+
+  for (let attempt = 0; attempt < DAILY_MAX_RETRIES; attempt++) {
+    const rejectionNote =
+      rejectedQuestions.length > 0
+        ? `\n\nPREVIOUS ATTEMPTS REJECTED FOR BEING TOO EASY:\n${rejectedQuestions.map((q, i) => `${i + 1}. ${q}`).join('\n')}\nGenerate a significantly harder and more obscure question than any of the above.`
+        : '';
+
+    const userPrompt = `Generate today's featured daily question.${formatInstruction}${eraInstruction}${rejectionNote}
+
+Return only valid JSON, no markdown, no backticks.`;
+
+    const parsed = await callGemini(model, DAILY_SYSTEM_PROMPT, userPrompt);
+    if (!parsed) continue;
+
+    const question: Question = { id: crypto.randomUUID(), ...(parsed as Omit<Question, 'id'>) };
+
+    // Enforce minimum length (80 chars) AND banned-topic check
+    if (question.text.length < 80 || isQuestionTooEasy(question.text)) {
+      rejectedQuestions.push(question.text);
+      continue;
+    }
+
+    return question;
   }
 
-  const obscurityInstruction = `
-The daily question is the featured question of the day for a sabermetrics club. It must meet ALL of these criteria:
+  // All retries exhausted — use hardest fallback
+  return getFallbackQuestion('hard');
+}
 
-1. OBSCURE: The answer should not be immediately obvious to even knowledgeable fans. It should require genuine recall or reasoning from statistical knowledge.
-
-2. SPECIFIC: Ask about a specific number, year, player, or record — not a general concept.
-
-3. DEBATABLE: Ideally the question should be one where members of a sabermetrics club would argue about the answer before submitting. The kind of question that makes someone say 'wait, was it him or was it...'
-
-4. FACTUALLY PERFECT: The answer must be 100% verifiable and correct. Never generate a daily question where the answer could be disputed. Double-check all stats and records before generating.
-
-5. FORMAT VARIETY: Rotate through formats day by day:
- Monday: Advanced stat record (WAR, OPS+, ERA+, FIP)
- Tuesday: Obscure World Series or postseason fact
- Wednesday: Specific franchise record (any team)
- Thursday: Historical stat line or season record
- Friday: Pirates-specific obscure fact or record
- Saturday: Multi-part list question (name X players)
- Sunday: True/False with a surprising correct answer
-
-EXAMPLE daily questions at the correct difficulty level:
- - 'Which player holds the record for highest single-season WAR by a catcher since 1950 and what was it?'
- - 'Name the only pitcher since integration to win back-to-back Cy Young awards in both leagues'
- - 'What is the lowest team batting average to win a World Series since 1970?'
- - 'Which Pirate holds the franchise record for career WAR among pitchers who spent at least 5 seasons in Pittsburgh?'
- - 'True or False: The 1906 Chicago Cubs had a better Pythagorean win expectation than their actual record'
-
-Never generate a daily question that a casual fan could answer without significant baseball knowledge.`;
-
-  const userPrompt = `Generate a baseball trivia question about ${eraContext}
-Difficulty: ${difficulty}${obscurityInstruction}
-
-Return only valid JSON, no markdown.`;
-
-  try {
-    const result = await model.generateContent([
-      { text: SYSTEM_PROMPT },
-      { text: userPrompt },
-    ]);
-    const text = result.response.text().trim();
-    const cleaned = text.replace(/^```json?\n?/, '').replace(/\n?```$/, '');
-    const parsed = JSON.parse(cleaned);
-    return { id: crypto.randomUUID(), ...parsed };
-  } catch {
-    // Retry once with stronger JSON-only instruction
-    try {
-      const result = await model.generateContent([
-        { text: SYSTEM_PROMPT },
-        {
-          text:
-            userPrompt +
-            '\n\nReturn ONLY valid JSON. No markdown, no code fences, no explanation. Just the raw JSON object.',
-        },
-      ]);
-      const text = result.response.text().trim();
-      const cleaned = text.replace(/^```json?\n?/, '').replace(/\n?```$/, '');
-      const parsed = JSON.parse(cleaned);
-      return { id: crypto.randomUUID(), ...parsed };
-    } catch {
-      return generateQuestion(difficulty);
-    }
+// ── Era context helper ───────────────────────────────────────────────────────
+function getEraContext(era: string): string {
+  switch (era) {
+    case 'Pirates-birthday':
+      return 'Pittsburgh Pirates baseball with a birthday celebration angle. Focus on Pirates history, legendary Pirates players, memorable Pirates moments, and their storied franchise.';
+    case 'Sabermetrics':
+      return 'advanced baseball statistics including WAR, OPS+, FIP, WHIP, xFIP, wRC+, BABIP, and other sabermetric concepts. Test knowledge of these metrics and the players who excelled by these measures.';
+    case 'Deadball':
+      return 'the Deadball Era of baseball (approximately 1900–1919), including its players, pitching-dominated strategies, rules, and historic events.';
+    case 'Classic':
+      return 'the Classic Era of baseball (1920s–1960s), including the golden age of the sport, legendary players, and historic moments.';
+    case 'Modern':
+      return 'the Modern Era of baseball (1970s–present), including contemporary players, records, and events.';
+    case 'Pirates-focused':
+      return 'the Pittsburgh Pirates franchise, including their history, players, World Series appearances, and iconic moments at Forbes Field and PNC Park.';
+    default:
+      return `baseball history related to the ${era} era.`;
   }
 }
 
+// ── Fallback question bank (last resort) ────────────────────────────────────
 function getFallbackQuestion(difficulty?: 'easy' | 'medium' | 'hard'): Question {
   const questions: Question[] = [
     {
       id: crypto.randomUUID(),
-      text: 'Who holds the record for the most career home runs in MLB history?',
-      type: 'multiple_choice',
-      difficulty: 'easy',
-      options: ['Babe Ruth', 'Barry Bonds', 'Hank Aaron', 'Willie Mays'],
+      text: 'Which player holds the MLB record for highest single-season OPS+ with at least 500 plate appearances, posting a mark of 235 in 2002?',
+      type: 'type_in',
+      difficulty: 'hard',
       correct_answer: 'Barry Bonds',
-      explanation: "Barry Bonds hit 762 career home runs, surpassing Hank Aaron's record of 755.",
+      explanation: 'Barry Bonds posted an OPS+ of 235 in 2002, the highest single-season mark in MLB history among qualified hitters.',
       category: 'records',
     },
     {
       id: crypto.randomUUID(),
-      text: "In what year did Jackie Robinson break baseball's color barrier?",
+      text: 'What was the career ERA+ of Bob Gibson, widely regarded as one of the greatest pitchers in National League history?',
       type: 'type_in',
-      difficulty: 'medium',
-      correct_answer: '1947',
-      explanation: 'Jackie Robinson debuted with the Brooklyn Dodgers on April 15, 1947.',
-      category: 'history',
+      difficulty: 'hard',
+      correct_answer: '127',
+      explanation: 'Bob Gibson posted a career ERA+ of 127 over his Hall of Fame career with the St. Louis Cardinals.',
+      category: 'stats',
     },
     {
       id: crypto.randomUUID(),
-      text: 'Babe Ruth played his entire career with the New York Yankees.',
+      text: 'True or False: Walter Johnson had a higher career WAR than Cy Young despite winning fewer games.',
       type: 'true_false',
-      difficulty: 'easy',
-      correct_answer: 'False',
-      explanation:
-        'Ruth started his career with the Boston Red Sox before being sold to the Yankees in 1920.',
-      category: 'players',
+      difficulty: 'hard',
+      correct_answer: 'True',
+      explanation: "Walter Johnson's career WAR (~164) exceeds Cy Young's (~167) — actually remarkably close, but Johnson's dominance in a shorter career yields similar WAR to Young's longevity.",
+      category: 'stats',
+    },
+    {
+      id: crypto.randomUUID(),
+      text: 'Which Pittsburgh Pirate holds the franchise single-season record for position player WAR, posting a mark over 10 WAR in 1967?',
+      type: 'type_in',
+      difficulty: 'hard',
+      correct_answer: 'Roberto Clemente',
+      explanation: 'Roberto Clemente posted some of the highest WAR seasons in Pirates franchise history, combining elite defense in right field with outstanding hitting.',
+      category: 'stats',
     },
   ];
+
   const filtered = difficulty ? questions.filter((q) => q.difficulty === difficulty) : questions;
   const pool = filtered.length > 0 ? filtered : questions;
   return pool[Math.floor(Math.random() * pool.length)];

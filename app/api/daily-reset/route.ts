@@ -55,7 +55,7 @@ export async function GET(req: NextRequest) {
 
     const difficulty: 'hard' = 'hard';
 
-    const question = await generateDailyQuestion(era, difficulty);
+    const question = await generateDailyQuestion(era, difficulty, dayOfWeek);
     await setDailyQuestion(question);
     dailyQuestionGenerated = true;
   } catch (err) {
