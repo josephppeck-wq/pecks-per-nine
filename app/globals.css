@@ -1,26 +1,70 @@
 @import "tailwindcss";
 
-:root {
-  --background: #ffffff;
-  --foreground: #171717;
-}
-
-@theme inline {
-  --color-background: var(--background);
-  --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
-}
-
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
+@layer utilities {
+  .font-black-ops {
+    font-family: var(--font-black-ops), 'Black Ops One', cursive;
+  }
+  .font-special-elite {
+    font-family: var(--font-special-elite), 'Special Elite', monospace;
   }
 }
 
-body {
-  background: var(--background);
-  color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+@keyframes birthdayPulse {
+  0%, 100% {
+    box-shadow: 0 0 20px #FFD700, 0 0 40px #FFD700, inset 0 0 20px rgba(255,215,0,0.1);
+    border-color: #FFD700;
+  }
+  50% {
+    box-shadow: 0 0 40px #FFD700, 0 0 80px #FFD700, inset 0 0 40px rgba(255,215,0,0.2);
+    border-color: #FFA500;
+  }
+}
+
+.birthday-border {
+  border: 4px solid #FFD700;
+  animation: birthdayPulse 2s ease-in-out infinite;
+}
+
+.ticket-stub {
+  display: inline-block;
+  background: #8B1A1A;
+  color: #F5E642;
+  font-family: var(--font-black-ops), cursive;
+  font-size: 1.1rem;
+  padding: 12px 28px;
+  border: 3px solid #F5E642;
+  position: relative;
+  cursor: pointer;
+  text-decoration: none;
+  letter-spacing: 0.08em;
+  transition: all 0.15s;
+  clip-path: polygon(8px 0%, calc(100% - 8px) 0%, 100% 8px, 100% calc(100% - 8px), calc(100% - 8px) 100%, 8px 100%, 0% calc(100% - 8px), 0% 8px);
+}
+
+.ticket-stub:hover {
+  background: #a02020;
+  color: #FFFFFF;
+  transform: translateY(-2px);
+}
+
+.ticket-stub-secondary {
+  background: #1a3a5c;
+}
+
+.ticket-stub-secondary:hover {
+  background: #1e4a70;
+}
+
+@keyframes fadeIn {
+  from { opacity: 0; transform: translateY(10px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+.fade-in {
+  animation: fadeIn 0.4s ease forwards;
+}
+
+@keyframes pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.5; }
 }

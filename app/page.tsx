@@ -1,65 +1,95 @@
-import Image from "next/image";
+'use client';
+import { useState, useEffect } from 'react';
+import Link from 'next/link';
+import Image from 'next/image';
+import { isBirthday } from '@/lib/birthday';
+import BirthdayFireworks from '@/components/BirthdayFireworks';
 
 export default function Home() {
+  const [birthday, setBirthday] = useState(false);
+
+  useEffect(() => {
+    setBirthday(isBirthday());
+  }, []);
+
   return (
-    <div className="flex flex-col flex-1 items-center justify-center bg-zinc-50 font-sans dark:bg-black">
-      <main className="flex flex-1 w-full max-w-3xl flex-col items-center justify-between py-32 px-16 bg-white dark:bg-black sm:items-start">
+    <main className="relative min-h-screen overflow-hidden flex items-center justify-center">
+      {/* Background photo z-index 0 */}
+      <div className="absolute inset-0" style={{ zIndex: 0 }}>
         <Image
-          className="dark:invert"
-          src="/next.svg"
-          alt="Next.js logo"
-          width={100}
-          height={20}
+          src="https://upload.wikimedia.org/wikipedia/commons/thumb/5/5c/Forbes_Field_interior.jpg/1280px-Forbes_Field_interior.jpg"
+          alt="Forbes Field"
+          fill
+          style={{ objectFit: 'cover', filter: 'sepia(0.4) brightness(0.9)' }}
           priority
+          unoptimized
         />
-        <div className="flex flex-col items-center gap-6 text-center sm:items-start sm:text-left">
-          <h1 className="max-w-xs text-3xl font-semibold leading-10 tracking-tight text-black dark:text-zinc-50">
-            To get started, edit the page.tsx file.
+        <div className="absolute inset-0 bg-black/50" />
+      </div>
+
+      {/* Fireworks z-index 1 */}
+      {birthday && <BirthdayFireworks />}
+
+      {/* Scoreboard z-index 2 */}
+      <div
+        className={`relative text-center px-8 py-12 ${birthday ? 'birthday-border' : 'border-4 border-[#F5E642]'}`}
+        style={{
+          zIndex: 2,
+          background: 'rgba(10,10,15,0.85)',
+          minWidth: 320,
+          maxWidth: 600,
+          boxShadow: '0 0 40px rgba(0,0,0,0.8)',
+        }}
+      >
+        {birthday ? (
+          <>
+            <p className="font-black-ops text-2xl mb-2" style={{ color: '#FFD700' }}>
+              HAPPY BIRTHDAY
+            </p>
+            <h1
+              className="font-black-ops text-5xl mb-2"
+              style={{ color: '#FFD700', letterSpacing: '0.05em' }}
+            >
+              JOHN PECK
+            </h1>
+          </>
+        ) : (
+          <h1
+            className="font-black-ops text-5xl mb-4"
+            style={{ color: '#F5E642', letterSpacing: '0.05em' }}
+          >
+            PECK&apos;S
+            <br />
+            PER NINE
           </h1>
-          <p className="max-w-md text-lg leading-8 text-zinc-600 dark:text-zinc-400">
-            Looking for a starting point or more instructions? Head over to{" "}
-            <a
-              href="https://vercel.com/templates?framework=next.js&utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-              className="font-medium text-zinc-950 dark:text-zinc-50"
-            >
-              Templates
-            </a>{" "}
-            or the{" "}
-            <a
-              href="https://nextjs.org/learn?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-              className="font-medium text-zinc-950 dark:text-zinc-50"
-            >
-              Learning
-            </a>{" "}
-            center.
-          </p>
+        )}
+
+        <p className="font-special-elite text-lg text-gray-300 mb-8">
+          Baseball Trivia from the Golden Age
+        </p>
+
+        {/* Ticket stub buttons z-index 3 */}
+        <div
+          className="flex gap-4 justify-center flex-wrap"
+          style={{ zIndex: 3, position: 'relative' }}
+        >
+          <Link href="/play" className="ticket-stub">
+            PLAY BALL
+          </Link>
+          <Link href="/daily" className="ticket-stub ticket-stub-secondary">
+            TODAY&apos;S QUESTION
+          </Link>
         </div>
-        <div className="flex flex-col gap-4 text-base font-medium sm:flex-row">
-          <a
-            className="flex h-12 w-full items-center justify-center gap-2 rounded-full bg-foreground px-5 text-background transition-colors hover:bg-[#383838] dark:hover:bg-[#ccc] md:w-[158px]"
-            href="https://vercel.com/new?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
+
+        <div className="mt-8 flex gap-6 justify-center">
+          <Link
+            href="/leaderboard"
+            className="font-special-elite text-[#F5E642] hover:text-white text-sm underline-offset-2 hover:underline"
           >
-            <Image
-              className="dark:invert"
-              src="/vercel.svg"
-              alt="Vercel logomark"
-              width={16}
-              height={16}
-            />
-            Deploy Now
-          </a>
-          <a
-            className="flex h-12 w-full items-center justify-center rounded-full border border-solid border-black/[.08] px-5 transition-colors hover:border-transparent hover:bg-black/[.04] dark:border-white/[.145] dark:hover:bg-[#1a1a1a] md:w-[158px]"
-            href="https://nextjs.org/docs?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            Documentation
-          </a>
+            LEADERBOARD
+          </Link>
         </div>
-      </main>
-    </div>
+      </div>
+    </main>
   );
 }
