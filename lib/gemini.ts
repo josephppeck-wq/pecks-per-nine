@@ -40,11 +40,43 @@ medium (50% of questions):
  - Example: 'Who holds the NL record for RBIs in a single season?' or 'What year did Forbes Field open?'
  - Should stump most fans
 
-hard (30% of questions):
- - Expert level — sabermetrics club difficulty
- - Advanced stats, obscure records, rare facts
- - Example: 'Which pitcher had the lowest ERA+ in a Cy Young winning season since 1980?'
- - Should challenge even hardcore historians
+HARD DIFFICULTY — SABERMETRICS CLUB STANDARD:
+These questions must genuinely challenge people who:
+ - Know advanced stats cold (WAR, OPS+, ERA+, FIP, wRC+)
+ - Have memorized World Series rosters and stats
+ - Can recall specific season stat lines from memory
+ - Debate Hall of Fame WAR thresholds for fun
+
+Example hard questions that are ACCEPTABLE:
+ - 'Which pitcher led the NL in FIP in 1968 despite not winning the Cy Young?'
+ - 'Who holds the record for highest single-season OPS+ with fewer than 400 plate appearances since 1980?'
+ - 'Name the only player to steal 40+ bases and hit 40+ home runs in the same season in the AL'
+ - 'What was Roberto Clemente's career OPS+?'
+ - 'Which team had the highest run differential in MLB history without winning the World Series?'
+ - 'Who holds the Pirates franchise record for single season WAR position players?'
+ - 'What year did the Cubs have their highest team ERA+ since 1900?'
+ - 'Name the only pitcher since 1950 to throw a no-hitter and lose'
+
+Example questions that are NOT ACCEPTABLE for hard:
+ - 'How many home runs did Babe Ruth hit?'
+ - 'Who won the 1979 World Series?'
+ - 'What team did Willie Mays play for?'
+ - Any question answerable by a casual fan
+
+For list questions at hard difficulty:
+ - 'Name 5 players with a career OPS+ over 160 with at least 5000 plate appearances'
+ - 'Name 4 pitchers who won the Cy Young with an ERA+ over 180'
+ - 'Name 3 players who had a 10+ WAR season since 2000'
+
+For true/false at hard difficulty:
+ - Must involve specific stats or records that require genuine expertise to evaluate
+ - Example: 'True or False: Mike Trout's peak 3-year WAR from 2012-2014 exceeded Barry Bonds' peak 3-year WAR from 2001-2003'
+ - Never use obvious true/false that any fan would know
+
+For type-in at hard difficulty:
+ - Ask for specific numbers, years, or names that require genuine recall
+ - Example: 'To the nearest 10 points, what was Ted Williams' OPS+ in his final full season?'
+ - Accept answers within reasonable range for numeric answers
 
 NEVER generate questions about:
  - Basic Hall of Fame membership
@@ -129,13 +161,33 @@ export async function generateDailyQuestion(
   }
 
   const obscurityInstruction = `
-This is the featured daily question. It must be a genuinely obscure fact that even dedicated fans would find challenging. Ideal daily questions:
-- Specific statistical records and the players who hold them
-- Obscure World Series or playoff facts
-- Rare achievements or unusual records
-- Specific dates, numbers, or stats that require deep knowledge
-- Pirates-specific obscure facts when era is Pirates-focused or Pirates-birthday
-The question should make a sabermetrics club debate the answer before submitting.`;
+The daily question is the featured question of the day for a sabermetrics club. It must meet ALL of these criteria:
+
+1. OBSCURE: The answer should not be immediately obvious to even knowledgeable fans. It should require genuine recall or reasoning from statistical knowledge.
+
+2. SPECIFIC: Ask about a specific number, year, player, or record — not a general concept.
+
+3. DEBATABLE: Ideally the question should be one where members of a sabermetrics club would argue about the answer before submitting. The kind of question that makes someone say 'wait, was it him or was it...'
+
+4. FACTUALLY PERFECT: The answer must be 100% verifiable and correct. Never generate a daily question where the answer could be disputed. Double-check all stats and records before generating.
+
+5. FORMAT VARIETY: Rotate through formats day by day:
+ Monday: Advanced stat record (WAR, OPS+, ERA+, FIP)
+ Tuesday: Obscure World Series or postseason fact
+ Wednesday: Specific franchise record (any team)
+ Thursday: Historical stat line or season record
+ Friday: Pirates-specific obscure fact or record
+ Saturday: Multi-part list question (name X players)
+ Sunday: True/False with a surprising correct answer
+
+EXAMPLE daily questions at the correct difficulty level:
+ - 'Which player holds the record for highest single-season WAR by a catcher since 1950 and what was it?'
+ - 'Name the only pitcher since integration to win back-to-back Cy Young awards in both leagues'
+ - 'What is the lowest team batting average to win a World Series since 1970?'
+ - 'Which Pirate holds the franchise record for career WAR among pitchers who spent at least 5 seasons in Pittsburgh?'
+ - 'True or False: The 1906 Chicago Cubs had a better Pythagorean win expectation than their actual record'
+
+Never generate a daily question that a casual fan could answer without significant baseball knowledge.`;
 
   const userPrompt = `Generate a baseball trivia question about ${eraContext}
 Difficulty: ${difficulty}${obscurityInstruction}

@@ -79,16 +79,18 @@ export default function GamePage() {
 
   // ── Fetch a new question ─────────────────────────────────────────────────────
   const fetchQuestion = useCallback(async (): Promise<Question | null> => {
+    // Sabermetrics mode: ALWAYS hard, era unrestricted (all eras of stats history fair game)
+    // URL difficulty param is completely ignored for sabermetrics — never easy or medium
     const isSabermetrics = mode === 'sabermetrics';
     try {
       const res = await fetch('/api/generate-question', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          difficulty: isSabermetrics ? 'hard' : difficulty === 'mixed' ? undefined : difficulty,
-          category: category === 'all' ? undefined : category,
+          difficulty: isSabermetrics ? 'hard' : (difficulty === 'mixed' ? undefined : difficulty),
+          category: isSabermetrics ? undefined : (category === 'all' ? undefined : category),
           questionType: isSabermetrics ? 'type_in' : undefined,
-          era: isSabermetrics ? 'sabermetrics' : undefined,
+          // No era restriction for sabermetrics — questions can span all eras of baseball history
           usedQuestions: usedQuestionsRef.current,
         }),
       });
