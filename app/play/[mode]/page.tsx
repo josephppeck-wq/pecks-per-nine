@@ -13,20 +13,6 @@ import type { Question } from '@/lib/gemini';
 
 type GamePhase = 'loading' | 'question' | 'revealing' | 'gameover';
 
-interface GameState {
-  questions: Question[];
-  currentIndex: number;
-  score: number;
-  correctCount: number;
-  streak: number;
-  maxStreak: number;
-  timeRemaining: number;
-  phase: GamePhase;
-  selectedAnswer: string | string[] | null;
-  lastCorrect: boolean | null;
-  pointsEarned: number;
-}
-
 const QUESTION_TIME = 30;
 
 function checkAnswer(userAnswer: string | string[], question: Question): boolean {
@@ -66,27 +52,35 @@ export default function GamePage() {
   const scoreboard = getScoreboardForMode(mode);
   const [imgError, setImgError] = useState(false);
 
-  const [state, setState] = useState<GameState>({
-    questions: [],
-    currentIndex: 0,
-    score: 0,
-    correctCount: 0,
-    streak: 0,
-    maxStreak: 0,
-    timeRemaining: QUESTION_TIME,
-    phase: 'loading',
-    selectedAnswer: null,
-    lastCorrect: null,
-    pointsEarned: 0,
-  });
+  // ── Core game state ──────────────────────────────────────────────────────────
+  const [phase, setPhase] = useState<GamePhase>('loading');
+  const [currentQuestion, setCurrentQuestion] = useState<Question | null>(null);
+  const [questionNumber, setQuestionNumber] = useState(1); // 1-based, for display
 
-  const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  // Score/streak state (not used in async closures — read from refs for submit)
+  const [score, setScore] = useState(0);
+  const [correctCount, setCorrectCount] = useState(0);
+  const [streak, setStreak] = useState(0);
+  const [maxStreak, setMaxStreak] = useState(0);
+  const [timeRemaining, setTimeRemaining] = useState(QUESTION_TIME);
+  const [selectedAnswer, setSelectedAnswer] = useState<string | string[] | null>(null);
+  const [lastCorrect, setLastCorrect] = useState<boolean | null>(null);
+  const [pointsEarned, setPointsEarned] = useState(0);
   const [showEmail, setShowEmail] = useState(false);
-  const usedQuestionsRef = useRef<string[]>([]);
 
+  // ── Refs: always-current values for use inside async callbacks ───────────────
+  const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const usedQuestionsRef = useRef<string[]>([]);
+  const scoreRef = useRef(0);
+  const correctCountRef = useRef(0);
+  const maxStreakRef = useRef(0);
+  const questionNumberRef = useRef(1);
+  const isFetchingRef = useRef(false); // guard against double-fetch
+
+  // ── Fetch a new question ─────────────────────────────────────────────────────
   const fetchQuestion = useCallback(async (): Promise<Question | null> => {
+    const isSabermetrics = mode === 'sabermetrics';
     try {
-      const isSabermetrics = mode === 'sabermetrics';
       const res = await fetch('/api/generate-question', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -105,103 +99,137 @@ export default function GamePage() {
     }
   }, [difficulty, category, mode]);
 
+  // ── Load first question on mount ─────────────────────────────────────────────
   useEffect(() => {
+    let cancelled = false;
     (async () => {
       const q = await fetchQuestion();
-      if (q)
-        setState((s) => ({ ...s, questions: [q], phase: 'question', timeRemaining: QUESTION_TIME }));
+      if (!cancelled && q) {
+        setCurrentQuestion(q);
+        setPhase('question');
+        setTimeRemaining(QUESTION_TIME);
+      }
     })();
-  }, [fetchQuestion]);
+    return () => { cancelled = true; };
+    // fetchQuestion is stable (deps are URL params that don't change mid-game)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []); // intentionally run once on mount
 
-  // Timer
+  // ── Timer ────────────────────────────────────────────────────────────────────
   useEffect(() => {
-    if (state.phase !== 'question') return;
+    if (phase !== 'question') return;
     timerRef.current = setInterval(() => {
-      setState((s) => {
-        if (s.timeRemaining <= 1) {
+      setTimeRemaining((t) => {
+        if (t <= 1) {
           clearInterval(timerRef.current!);
-          return {
-            ...s,
-            timeRemaining: 0,
-            phase: 'revealing',
-            lastCorrect: false,
-            selectedAnswer: null,
-            pointsEarned: 0,
-          };
+          // Time's up — treat as wrong answer
+          handleTimeUp();
+          return 0;
         }
-        return { ...s, timeRemaining: s.timeRemaining - 1 };
+        return t - 1;
       });
     }, 1000);
     return () => clearInterval(timerRef.current!);
-  }, [state.phase, state.currentIndex]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [phase, currentQuestion?.id]); // re-arm timer when question changes
 
+  // ── Time-up handler (separate to avoid stale closure in timer) ───────────────
+  const handleTimeUp = useCallback(() => {
+    setPhase('revealing');
+    setSelectedAnswer(null);
+    setLastCorrect(false);
+    setPointsEarned(0);
+    setStreak(0);
+    // Track the question as used even on timeout
+    if (currentQuestion && !usedQuestionsRef.current.includes(currentQuestion.text)) {
+      usedQuestionsRef.current = [...usedQuestionsRef.current, currentQuestion.text];
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [currentQuestion?.id]);
+
+  // ── Answer handler ───────────────────────────────────────────────────────────
   const handleAnswer = useCallback(
     (answer: string | string[]) => {
+      if (!currentQuestion || phase !== 'question') return;
       clearInterval(timerRef.current!);
-      setState((s) => {
-        const q = s.questions[s.currentIndex];
-        // Track this question so it won't repeat
-        if (q && !usedQuestionsRef.current.includes(q.text)) {
-          usedQuestionsRef.current = [...usedQuestionsRef.current, q.text];
-        }
-        const correct = answer !== '' && checkAnswer(answer, q);
-        const newStreak = correct ? s.streak + 1 : 0;
-        const points = correct ? calcScore(q.difficulty, s.timeRemaining, newStreak) : 0;
-        return {
-          ...s,
-          phase: 'revealing',
-          selectedAnswer: answer,
-          lastCorrect: correct,
-          score: s.score + points,
-          correctCount: s.correctCount + (correct ? 1 : 0),
-          streak: newStreak,
-          maxStreak: Math.max(s.maxStreak, newStreak),
-          pointsEarned: points,
-        };
+
+      // Track used question to prevent repeats
+      if (!usedQuestionsRef.current.includes(currentQuestion.text)) {
+        usedQuestionsRef.current = [...usedQuestionsRef.current, currentQuestion.text];
+      }
+
+      const correct = answer !== '' && checkAnswer(answer, currentQuestion);
+
+      setStreak((s) => {
+        const newStreak = correct ? s + 1 : 0;
+        setMaxStreak((ms) => {
+          const newMax = Math.max(ms, newStreak);
+          maxStreakRef.current = newMax;
+          return newMax;
+        });
+        return newStreak;
       });
+
+      const points = correct
+        ? calcScore(currentQuestion.difficulty, timeRemaining, streak + (correct ? 1 : 0))
+        : 0;
+
+      setScore((s) => { scoreRef.current = s + points; return s + points; });
+      setCorrectCount((c) => { correctCountRef.current = c + (correct ? 1 : 0); return c + (correct ? 1 : 0); });
+      setSelectedAnswer(answer);
+      setLastCorrect(correct);
+      setPointsEarned(points);
+      setPhase('revealing');
     },
-    []
+    [currentQuestion, phase, timeRemaining, streak]
   );
 
+  // ── Next question handler ────────────────────────────────────────────────────
   const handleNext = useCallback(async () => {
-    const nextIndex = state.currentIndex + 1;
-    if (nextIndex >= totalCount) {
-      setState((s) => ({ ...s, phase: 'gameover' }));
+    const nextNum = questionNumberRef.current + 1;
+
+    if (nextNum > totalCount) {
+      // Game over
+      setPhase('gameover');
       try {
         await fetch('/api/submit-score', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
-            score: state.score,
+            score: scoreRef.current,
             questionsAnswered: totalCount,
-            correctAnswers: state.correctCount,
-            streakMax: state.maxStreak,
+            correctAnswers: correctCountRef.current,
+            streakMax: maxStreakRef.current,
             mode,
-            timeSpent: totalCount * QUESTION_TIME - state.timeRemaining,
+            timeSpent: totalCount * QUESTION_TIME,
           }),
         });
-      } catch {
-        /* silent */
-      }
+      } catch { /* silent */ }
       return;
     }
 
-    setState((s) => ({ ...s, phase: 'loading' }));
+    // Guard against double-tap
+    if (isFetchingRef.current) return;
+    isFetchingRef.current = true;
 
-    // Always fetch a fresh question — pass usedQuestions to guarantee no repeats
+    setPhase('loading');
+    setSelectedAnswer(null);
+    setLastCorrect(null);
+
     const q = await fetchQuestion();
-    setState((s) => ({
-      ...s,
-      questions: q ? [...s.questions, q] : s.questions,
-      currentIndex: nextIndex,
-      phase: q ? 'question' : 'gameover',
-      timeRemaining: QUESTION_TIME,
-      selectedAnswer: null,
-      lastCorrect: null,
-    }));
-  }, [state, totalCount, mode, fetchQuestion]);
+    isFetchingRef.current = false;
 
-  const currentQuestion = state.questions[state.currentIndex];
+    if (q) {
+      questionNumberRef.current = nextNum;
+      setQuestionNumber(nextNum);
+      setCurrentQuestion(q);
+      setTimeRemaining(QUESTION_TIME);
+      setPhase('question');
+    } else {
+      // Fetch failed — end game rather than show nothing
+      setPhase('gameover');
+    }
+  }, [totalCount, mode, fetchQuestion]);
 
   const bgStyle = imgError ? { background: scoreboard.fallbackColor } : {};
 
@@ -226,34 +254,34 @@ export default function GamePage() {
       )}
 
       <div className="relative flex flex-col min-h-screen p-4" style={{ zIndex: 1 }}>
-        {/* Header — score + progress */}
+        {/* Header */}
         <div className="flex justify-between items-center mb-6 max-w-2xl mx-auto w-full">
           <div>
             <span className="font-special-elite text-xs text-gray-400 block">RUNS</span>
             <span className="font-black-ops text-3xl" style={{ color: '#FFD700' }}>
-              {state.score.toLocaleString()}
+              {score.toLocaleString()}
             </span>
           </div>
           <div className="text-center">
             <span className="font-special-elite text-xs text-gray-400 block">INNING</span>
             <span className="font-black-ops text-2xl" style={{ color: '#F5E642' }}>
-              {state.currentIndex + 1} / {totalCount}
+              {questionNumber} / {totalCount}
             </span>
           </div>
-          {state.streak >= 3 && (
+          {streak >= 3 && (
             <div className="text-center">
               <span className="font-special-elite text-xs text-gray-400 block">STREAK</span>
               <span className="font-black-ops text-xl" style={{ color: '#FF8C00' }}>
-                🔥 {state.streak}
+                🔥 {streak}
               </span>
             </div>
           )}
-          {state.phase === 'question' && currentQuestion && (
+          {phase === 'question' && currentQuestion && (
             <Timer
               duration={QUESTION_TIME}
-              timeRemaining={state.timeRemaining}
+              timeRemaining={timeRemaining}
               onTimeUp={() => handleAnswer('')}
-              isRunning={state.phase === 'question'}
+              isRunning={phase === 'question'}
             />
           )}
         </div>
@@ -267,13 +295,13 @@ export default function GamePage() {
               border: `2px solid ${scoreboard.textColor}40`,
             }}
           >
-            {state.phase === 'loading' && (
+            {phase === 'loading' && (
               <div className="text-center py-12 font-special-elite text-gray-500">
                 Loading question...
               </div>
             )}
 
-            {(state.phase === 'question' || state.phase === 'revealing') && currentQuestion && (
+            {(phase === 'question' || phase === 'revealing') && currentQuestion && (
               <>
                 <div className="flex gap-2 mb-4 justify-between items-center">
                   <span
@@ -297,15 +325,18 @@ export default function GamePage() {
                   </span>
                 </div>
 
+                {/* key={currentQuestion.id} forces remount on every new question,
+                    clearing all internal component state (TypeIn text field, etc.) */}
                 {currentQuestion.type === 'multiple_choice' && (
                   <MultipleChoice
+                    key={currentQuestion.id}
                     question={currentQuestion.text}
                     options={currentQuestion.options || []}
                     onAnswer={handleAnswer}
-                    disabled={state.phase === 'revealing'}
-                    selectedAnswer={state.selectedAnswer as string}
+                    disabled={phase === 'revealing'}
+                    selectedAnswer={selectedAnswer as string}
                     correctAnswer={
-                      state.phase === 'revealing'
+                      phase === 'revealing'
                         ? (currentQuestion.correct_answer as string)
                         : undefined
                     }
@@ -313,12 +344,13 @@ export default function GamePage() {
                 )}
                 {currentQuestion.type === 'true_false' && (
                   <TrueFalse
+                    key={currentQuestion.id}
                     question={currentQuestion.text}
                     onAnswer={handleAnswer}
-                    disabled={state.phase === 'revealing'}
-                    selectedAnswer={state.selectedAnswer as string}
+                    disabled={phase === 'revealing'}
+                    selectedAnswer={selectedAnswer as string}
                     correctAnswer={
-                      state.phase === 'revealing'
+                      phase === 'revealing'
                         ? (currentQuestion.correct_answer as string)
                         : undefined
                     }
@@ -326,48 +358,50 @@ export default function GamePage() {
                 )}
                 {currentQuestion.type === 'type_in' && (
                   <TypeIn
+                    key={currentQuestion.id}
                     question={currentQuestion.text}
                     onAnswer={handleAnswer}
-                    disabled={state.phase === 'revealing'}
+                    disabled={phase === 'revealing'}
                     correctAnswer={
-                      state.phase === 'revealing'
+                      phase === 'revealing'
                         ? (currentQuestion.correct_answer as string)
                         : undefined
                     }
-                    userAnswer={state.selectedAnswer as string}
+                    userAnswer={selectedAnswer as string}
                   />
                 )}
                 {currentQuestion.type === 'list_entry' && (
                   <ListEntry
+                    key={currentQuestion.id}
                     question={currentQuestion.text}
                     onAnswer={(a) => handleAnswer(a)}
-                    disabled={state.phase === 'revealing'}
+                    disabled={phase === 'revealing'}
                     correctAnswers={
-                      state.phase === 'revealing'
+                      phase === 'revealing'
                         ? (currentQuestion.correct_answer as string[])
                         : undefined
                     }
-                    userAnswers={state.selectedAnswer as string[]}
+                    userAnswers={selectedAnswer as string[]}
                   />
                 )}
 
-                {state.phase === 'revealing' && (
+                {phase === 'revealing' && (
                   <div className="mt-6 fade-in">
                     <div
                       className="p-4 mb-4"
                       style={{
-                        background: state.lastCorrect
+                        background: lastCorrect
                           ? 'rgba(76,175,80,0.15)'
                           : 'rgba(255,68,68,0.15)',
-                        border: `1px solid ${state.lastCorrect ? '#4CAF50' : '#FF4444'}40`,
+                        border: `1px solid ${lastCorrect ? '#4CAF50' : '#FF4444'}40`,
                       }}
                     >
                       <p
                         className="font-black-ops text-lg mb-1"
-                        style={{ color: state.lastCorrect ? '#4CAF50' : '#FF4444' }}
+                        style={{ color: lastCorrect ? '#4CAF50' : '#FF4444' }}
                       >
-                        {state.lastCorrect
-                          ? `✓ CORRECT! +${state.pointsEarned} RUNS`
+                        {lastCorrect
+                          ? `✓ CORRECT! +${pointsEarned} RUNS`
                           : '✗ WRONG'}
                       </p>
                       <p className="font-special-elite text-sm text-gray-300">
@@ -375,7 +409,7 @@ export default function GamePage() {
                       </p>
                     </div>
                     <button onClick={handleNext} className="ticket-stub w-full text-center">
-                      {state.currentIndex + 1 >= totalCount
+                      {questionNumber >= totalCount
                         ? 'FINAL SCORECARD →'
                         : 'NEXT PITCH →'}
                     </button>
@@ -384,20 +418,20 @@ export default function GamePage() {
               </>
             )}
 
-            {state.phase === 'gameover' && !showEmail && (
+            {phase === 'gameover' && !showEmail && (
               <div className="text-center py-6 fade-in">
                 <h2 className="font-black-ops text-4xl mb-2" style={{ color: '#FFD700' }}>
                   FINAL SCORE
                 </h2>
                 <p className="font-black-ops text-6xl mb-4" style={{ color: '#F5E642' }}>
-                  {state.score.toLocaleString()}
+                  {score.toLocaleString()}
                 </p>
                 <p className="font-special-elite text-lg text-gray-300 mb-2">
-                  {state.correctCount} / {totalCount} correct
+                  {correctCount} / {totalCount} correct
                 </p>
-                {state.maxStreak >= 3 && (
+                {maxStreak >= 3 && (
                   <p className="font-special-elite text-sm text-orange-400 mb-4">
-                    Best streak: {state.maxStreak} 🔥
+                    Best streak: {maxStreak} 🔥
                   </p>
                 )}
                 <div className="flex gap-4 justify-center mt-6">
@@ -414,10 +448,10 @@ export default function GamePage() {
               </div>
             )}
 
-            {state.phase === 'gameover' && showEmail && (
+            {phase === 'gameover' && showEmail && (
               <EmailCapture
-                score={state.score}
-                correctAnswers={state.correctCount}
+                score={score}
+                correctAnswers={correctCount}
                 totalQuestions={totalCount}
                 mode={mode}
                 onSent={() => setTimeout(() => router.push('/leaderboard'), 2000)}
