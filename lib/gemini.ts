@@ -72,6 +72,70 @@ Return only valid JSON, no markdown.`;
   }
 }
 
+export async function generateDailyQuestion(
+  era: string,
+  difficulty: 'medium' | 'hard'
+): Promise<Question> {
+  const model = genAI.getGenerativeModel({ model: 'gemini-2.5-flash' });
+
+  let eraContext: string;
+  if (era === 'Pirates-birthday') {
+    eraContext =
+      'Pittsburgh Pirates baseball with a birthday celebration angle. Focus on Pirates history, legendary Pirates players, memorable Pirates moments, and their storied franchise.';
+  } else if (era === 'Sabermetrics') {
+    eraContext =
+      'advanced baseball statistics including WAR, OPS+, FIP, WHIP, xFIP, wRC+, BABIP, and other sabermetric concepts. Test knowledge of these metrics and the players who excelled by these measures.';
+  } else if (era === 'Deadball') {
+    eraContext =
+      'the Deadball Era of baseball (approximately 1900–1919), including its players, pitching-dominated strategies, rules, and historic events.';
+  } else if (era === 'Classic') {
+    eraContext =
+      'the Classic Era of baseball (1920s–1960s), including the golden age of the sport, legendary players, and historic moments.';
+  } else if (era === 'Modern') {
+    eraContext =
+      'the Modern Era of baseball (1970s–present), including contemporary players, records, and events.';
+  } else if (era === 'Pirates-focused') {
+    eraContext =
+      'the Pittsburgh Pirates franchise, including their history, players, World Series appearances, and iconic moments at Forbes Field and PNC Park.';
+  } else {
+    eraContext = `baseball history related to the ${era} era.`;
+  }
+
+  const userPrompt = `Generate a baseball trivia question about ${eraContext}
+Difficulty: ${difficulty}
+
+Return only valid JSON, no markdown.`;
+
+  try {
+    const result = await model.generateContent([
+      { text: SYSTEM_PROMPT },
+      { text: userPrompt },
+    ]);
+    const text = result.response.text().trim();
+    const cleaned = text.replace(/^```json?\n?/, '').replace(/\n?```$/, '');
+    const parsed = JSON.parse(cleaned);
+    return { id: crypto.randomUUID(), ...parsed };
+  } catch {
+    // Retry once with stronger JSON-only instruction
+    try {
+      const result = await model.generateContent([
+        { text: SYSTEM_PROMPT },
+        {
+          text:
+            userPrompt +
+            '\n\nReturn ONLY valid JSON. No markdown, no code fences, no explanation. Just the raw JSON object.',
+        },
+      ]);
+      const text = result.response.text().trim();
+      const cleaned = text.replace(/^```json?\n?/, '').replace(/\n?```$/, '');
+      const parsed = JSON.parse(cleaned);
+      return { id: crypto.randomUUID(), ...parsed };
+    } catch {
+      return generateQuestion(difficulty);
+    }
+  }
+}
+
 function getFallbackQuestion(difficulty?: 'easy' | 'medium' | 'hard'): Question {
   const questions: Question[] = [
     {
